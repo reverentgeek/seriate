@@ -260,4 +260,181 @@ describe( "Seriate Integration Tests", function() {
 			} );
 		} );
 	} );
+
+	describe( "When retrieving multiple record sets using preparedSql", function() {
+		var id1;
+		var id2;
+		var insertCheck;
+		var insResults;
+		var multipleRSCheck;
+		var multipleResults;
+		before( function( done ) {
+			id1 = getRowId();
+			id2 = getRowId();
+			insertCheck = function( done ) {
+				sql.execute( config, {
+					preparedSql: "select * from tds_node_test..NodeTestTable where i1 IN ( @i1, @i2 )",
+					params: {
+						i1: {
+							val: id1,
+							type: sql.INT
+						},
+						i2: {
+							val: id2,
+							type: sql.INT
+						}
+					}
+				} ).then( function( res ) {
+					insResults = res;
+					done();
+				} );
+			};
+			multipleRSCheck = function( done ) {
+				sql.execute( config, {
+					preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1; select * from tds_node_test..NodeTestTable where i1 = @i2;",
+					params: {
+						i1: {
+							val: id1,
+							type: sql.INT
+						},
+						i2: {
+							val: id2,
+							type: sql.INT
+						}
+					},
+					multiple: true
+				} ).then( function( res ) {
+					multipleResults = res;
+					done();
+				} );
+			};
+
+			sql.execute( config, {
+				preparedSql: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1); insert into tds_node_test..NodeTestTable (v1, i1) values (@v2, @i2); ",
+				params: {
+					i1: {
+						val: id1,
+						type: sql.INT
+					},
+					v1: {
+						val: "result1",
+						type: sql.NVARCHAR
+					},
+					i2: {
+						val: id2,
+						type: sql.INT
+					},
+					v2: {
+						val: "result2",
+						type: sql.NVARCHAR
+					}
+				}
+			} ).then( function() {
+				insertCheck( done );
+			} );
+		} );
+
+		it( "should have inserted the rows", function() {
+			expect( insResults.length ).to.be( 2 );
+		} );
+		it( "should return 2 record sets", function( done ) {
+			multipleRSCheck( function() {
+				expect( multipleResults.length ).to.be( 2 );
+				expect( multipleResults[ 0 ].length ).to.be( 1 );
+				expect( multipleResults[ 1 ].length ).to.be( 1 );
+				expect( multipleResults[ 0 ][ 0 ].v1 ).to.be( "result1" );
+				expect( multipleResults[ 1 ][ 0 ].v1 ).to.be( "result2" );
+				expect( multipleResults.returnValue ).to.be( 0 );
+				done();
+			} );
+		} );
+	} );
+	describe( "When retrieving multiple record sets using plain query", function() {
+		var id1;
+		var id2;
+		var insertCheck;
+		var insResults;
+		var multipleRSCheck;
+		var multipleResults;
+		before( function( done ) {
+			id1 = getRowId();
+			id2 = getRowId();
+			insertCheck = function( done ) {
+				sql.execute( config, {
+					query: "select * from tds_node_test..NodeTestTable where i1 IN ( @i1, @i2 )",
+					params: {
+						i1: {
+							val: id1,
+							type: sql.INT
+						},
+						i2: {
+							val: id2,
+							type: sql.INT
+						}
+					}
+				} ).then( function( res ) {
+					insResults = res;
+					done();
+				} );
+			};
+			multipleRSCheck = function( done ) {
+				sql.execute( config, {
+					query: "select * from tds_node_test..NodeTestTable where i1 = @i1; select * from tds_node_test..NodeTestTable where i1 = @i2;",
+					params: {
+						i1: {
+							val: id1,
+							type: sql.INT
+						},
+						i2: {
+							val: id2,
+							type: sql.INT
+						}
+					},
+					multiple: true
+				} ).then( function( res ) {
+					multipleResults = res;
+					done();
+				} );
+			};
+
+			sql.execute( config, {
+				query: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1); insert into tds_node_test..NodeTestTable (v1, i1) values (@v2, @i2); ",
+				params: {
+					i1: {
+						val: id1,
+						type: sql.INT
+					},
+					v1: {
+						val: "result1",
+						type: sql.NVARCHAR
+					},
+					i2: {
+						val: id2,
+						type: sql.INT
+					},
+					v2: {
+						val: "result2",
+						type: sql.NVARCHAR
+					}
+				}
+			} ).then( function() {
+				insertCheck( done );
+			} );
+		} );
+
+		it( "should have inserted the rows", function() {
+			expect( insResults.length ).to.be( 2 );
+		} );
+		it( "should return 2 record sets", function( done ) {
+			multipleRSCheck( function() {
+				expect( multipleResults.length ).to.be( 2 );
+				expect( multipleResults[ 0 ].length ).to.be( 1 );
+				expect( multipleResults[ 1 ].length ).to.be( 1 );
+				expect( multipleResults[ 0 ][ 0 ].v1 ).to.be( "result1" );
+				expect( multipleResults[ 1 ][ 0 ].v1 ).to.be( "result2" );
+				expect( multipleResults.returnValue ).to.be( undefined );
+				done();
+			} );
+		} );
+	} );
 } );
