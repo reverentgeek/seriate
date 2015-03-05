@@ -1,10 +1,12 @@
 /* global describe,before,it */
+var _ = require( "lodash" );
 var expect = require( "expect.js" );
 var sinon = require( "sinon" );
 expect = require( "sinon-expect" ).enhance( expect, sinon, "was" );
 
 var sql = require( "../../src/index.js" );
-var config = require( "./local-config.json" );
+var origConfig = require( "./local-config.json" );
+var config = _.cloneDeep( origConfig );
 var getRowId = ( function() {
 	var _id = 0;
 	return function() {
@@ -14,7 +16,7 @@ var getRowId = ( function() {
 
 describe( "Seriate Integration Tests", function() {
 	before( function( done ) {
-		this.timeout( 20000 );
+		this.timeout( 10000 );
 		sql.getPlainContext( config )
 			.step( "DropDatabase", {
 				query: "if db_id('tds_node_test') is not null drop database tds_node_test"
@@ -24,11 +26,27 @@ describe( "Seriate Integration Tests", function() {
 			} )
 			.step( "CreateTable", {
 				query: "create table tds_node_test..NodeTestTable (bi1 bigint not null identity(1,1) primary key, v1 varchar(255), i1 int null)"
-			} ).step( "CreateSecondTable", {
-			query: "create table tds_node_test..NodeTestTableNoIdent (bi1 bigint not null primary key, v1 varchar(255), i1 int null)"
-		} )
+			} )
+			.step( "CreateSecondTable", {
+				query: "create table tds_node_test..NodeTestTableNoIdent (bi1 bigint not null primary key, v1 varchar(255), i1 int null)"
+			} )
 			.end( function() {
-				done();
+				config = _.cloneDeep( origConfig );
+				config.database = "tds_node_test";
+
+				sql.getPlainContext( config )
+					.step( "CreateProc", {
+						query: "CREATE PROC NodeTestProc ( @i1 int ) AS SELECT	bi1, v1, i1 FROM NodeTestTable WHERE i1 = @i1"
+					} )
+					.step( "CreateSecondProc", {
+						query: "CREATE PROC NodeTestMultipleProc ( @i1 int ) AS SELECT	bi1, v1, i1 FROM NodeTestTable WHERE i1 = @i1; SELECT totalRows = COUNT(*) FROM NodeTestTable;"
+					} )
+					.end( function() {
+						done();
+					} )
+					.error( function( err ) {
+						console.log( err );
+					} );
 			} )
 			.error( function( err ) {
 				console.log( err );
@@ -45,11 +63,14 @@ describe( "Seriate Integration Tests", function() {
 			var resultsCheck;
 			var checkError;
 			var readCheck;
+			var procCheck;
+			var procResultsCheck;
+			var checkProcError;
 			before( function( done ) {
 				id = getRowId();
 				readCheck = function( done ) {
 					sql.execute( config, {
-						preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1",
+						preparedSql: "select * from NodeTestTable where i1 = @i1",
 						params: {
 							i1: {
 								val: id,
@@ -64,10 +85,27 @@ describe( "Seriate Integration Tests", function() {
 							done();
 						} );
 				};
+				procCheck = function( done ) {
+					sql.execute( config, {
+						procedure: "NodeTestProc",
+						params: {
+							i1: {
+								val: id,
+								type: sql.INT
+							}
+						}
+					} ).then( function( res ) {
+						procResultsCheck = res;
+						done();
+					}, function( err ) {
+							checkProcError = err;
+							done();
+						} );
+				};
 				context = sql
 					.getTransactionContext( config )
 					.step( "insert", {
-						preparedSql: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1); select SCOPE_IDENTITY() AS NewId;",
+						preparedSql: "insert into NodeTestTable (v1, i1) values (@v1, @i1); select SCOPE_IDENTITY() AS NewId;",
 						params: {
 							i1: {
 								val: id,
@@ -84,7 +122,9 @@ describe( "Seriate Integration Tests", function() {
 						res.transaction
 							.commit()
 							.then( function() {
-								readCheck( done );
+								readCheck( function() {
+									procCheck( done );
+								} );
 							} );
 					} )
 					.error( function( err ) {
@@ -92,9 +132,14 @@ describe( "Seriate Integration Tests", function() {
 						done();
 					} );
 			} );
-			it( "should have return inserted row", function() {
+			it( "should have returned inserted row", function() {
 				expect( resultsCheck.length ).to.be( 1 );
 				expect( checkError ).to.not.be.ok();
+			} );
+			it( "should have returned the row using stored proc", function() {
+				expect( procResultsCheck.length ).to.be( 1 );
+				expect( procResultsCheck.returnValue ).to.be( 0 );
+				expect( checkProcError ).to.not.be.ok();
 			} );
 			it( "should have returned the identity of inserted row", function() {
 				expect( insResult.sets.insert[ 0 ].NewId ).to.be.ok();
@@ -112,7 +157,7 @@ describe( "Seriate Integration Tests", function() {
 				id = getRowId();
 				readCheck = function( done ) {
 					sql.execute( config, {
-						preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1",
+						preparedSql: "select * from NodeTestTable where i1 = @i1",
 						params: {
 							i1: {
 								val: id,
@@ -130,7 +175,7 @@ describe( "Seriate Integration Tests", function() {
 				context = sql
 					.getTransactionContext( config )
 					.step( "insert", {
-						preparedSql: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1)",
+						preparedSql: "insert into NodeTestTable (v1, i1) values (@v1, @i1)",
 						params: {
 							i1: {
 								val: id,
@@ -172,7 +217,7 @@ describe( "Seriate Integration Tests", function() {
 			id = getRowId();
 			insertCheck = function( done ) {
 				sql.execute( config, {
-					preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1",
+					preparedSql: "select * from NodeTestTable where i1 = @i1",
 					params: {
 						i1: {
 							val: id,
@@ -186,7 +231,7 @@ describe( "Seriate Integration Tests", function() {
 			};
 			updateCheck = function( done ) {
 				sql.execute( config, {
-					preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1",
+					preparedSql: "select * from NodeTestTable where i1 = @i1",
 					params: {
 						i1: {
 							val: id,
@@ -200,7 +245,7 @@ describe( "Seriate Integration Tests", function() {
 			};
 			updateCmd = function( done ) {
 				sql.execute( config, {
-					preparedSql: "update tds_node_test..NodeTestTable set v1 = @v1 where i1 = @i1",
+					preparedSql: "update NodeTestTable set v1 = @v1 where i1 = @i1",
 					params: {
 						i1: {
 							val: id,
@@ -218,7 +263,7 @@ describe( "Seriate Integration Tests", function() {
 					} );
 			};
 			sql.execute( config, {
-				preparedSql: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1)",
+				preparedSql: "insert into NodeTestTable (v1, i1) values (@v1, @i1)",
 				params: {
 					i1: {
 						val: id,
@@ -248,7 +293,7 @@ describe( "Seriate Integration Tests", function() {
 		it( "Should utilize default options", function( done ) {
 			sql.setDefaultConfig( config );
 			sql.execute( {
-				preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1",
+				preparedSql: "select * from NodeTestTable where i1 = @i1",
 				params: {
 					i1: {
 						val: getRowId(),
@@ -261,19 +306,23 @@ describe( "Seriate Integration Tests", function() {
 		} );
 	} );
 
-	describe( "When retrieving multiple record sets using preparedSql", function() {
+	describe( "When retrieving multiple record sets", function() {
 		var id1;
 		var id2;
 		var insertCheck;
 		var insResults;
 		var multipleRSCheck;
 		var multipleResults;
+		var multipleRSPlainCheck;
+		var multipleRSPlainResults;
+		var multipleRSProcCheck;
+		var multipleRSProcResults;
 		before( function( done ) {
 			id1 = getRowId();
 			id2 = getRowId();
 			insertCheck = function( done ) {
 				sql.execute( config, {
-					preparedSql: "select * from tds_node_test..NodeTestTable where i1 IN ( @i1, @i2 )",
+					preparedSql: "select * from NodeTestTable where i1 IN ( @i1, @i2 )",
 					params: {
 						i1: {
 							val: id1,
@@ -291,7 +340,7 @@ describe( "Seriate Integration Tests", function() {
 			};
 			multipleRSCheck = function( done ) {
 				sql.execute( config, {
-					preparedSql: "select * from tds_node_test..NodeTestTable where i1 = @i1; select * from tds_node_test..NodeTestTable where i1 = @i2;",
+					preparedSql: "select * from NodeTestTable where i1 = @i1; select * from NodeTestTable where i1 = @i2;",
 					params: {
 						i1: {
 							val: id1,
@@ -308,9 +357,48 @@ describe( "Seriate Integration Tests", function() {
 					done();
 				} );
 			};
+			multipleRSPlainCheck = function( done ) {
+				sql.execute( config, {
+					query: "select * from NodeTestTable where i1 = @i1; select * from NodeTestTable where i1 = @i2;",
+					params: {
+						i1: {
+							val: id1,
+							type: sql.INT
+						},
+						i2: {
+							val: id2,
+							type: sql.INT
+						}
+					},
+					multiple: true
+				} ).then( function( res ) {
+					multipleRSPlainResults = res;
+					done();
+				}, function( err ) {
+						console.log( err );
+						done();
+					} );
+			};
+			multipleRSProcCheck = function( done ) {
+				sql.execute( config, {
+					procedure: "NodeTestMultipleProc",
+					params: {
+						i1: {
+							val: id1,
+							type: sql.INT
+						}
+					}
+				} ).then( function( res ) {
+					multipleRSProcResults = res;
+					done();
+				}, function( err ) {
+						console.log( err );
+						done();
+					} );
+			};
 
 			sql.execute( config, {
-				preparedSql: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1); insert into tds_node_test..NodeTestTable (v1, i1) values (@v2, @i2); ",
+				preparedSql: "insert into NodeTestTable (v1, i1) values (@v1, @i1); insert into NodeTestTable (v1, i1) values (@v2, @i2); ",
 				params: {
 					i1: {
 						val: id1,
@@ -337,7 +425,7 @@ describe( "Seriate Integration Tests", function() {
 		it( "should have inserted the rows", function() {
 			expect( insResults.length ).to.be( 2 );
 		} );
-		it( "should return 2 record sets", function( done ) {
+		it( "should have 2 record sets from prepared sql", function( done ) {
 			multipleRSCheck( function() {
 				expect( multipleResults.length ).to.be( 2 );
 				expect( multipleResults[ 0 ].length ).to.be( 1 );
@@ -348,91 +436,25 @@ describe( "Seriate Integration Tests", function() {
 				done();
 			} );
 		} );
-	} );
-	describe( "When retrieving multiple record sets using plain query", function() {
-		var id1;
-		var id2;
-		var insertCheck;
-		var insResults;
-		var multipleRSCheck;
-		var multipleResults;
-		before( function( done ) {
-			id1 = getRowId();
-			id2 = getRowId();
-			insertCheck = function( done ) {
-				sql.execute( config, {
-					query: "select * from tds_node_test..NodeTestTable where i1 IN ( @i1, @i2 )",
-					params: {
-						i1: {
-							val: id1,
-							type: sql.INT
-						},
-						i2: {
-							val: id2,
-							type: sql.INT
-						}
-					}
-				} ).then( function( res ) {
-					insResults = res;
-					done();
-				} );
-			};
-			multipleRSCheck = function( done ) {
-				sql.execute( config, {
-					query: "select * from tds_node_test..NodeTestTable where i1 = @i1; select * from tds_node_test..NodeTestTable where i1 = @i2;",
-					params: {
-						i1: {
-							val: id1,
-							type: sql.INT
-						},
-						i2: {
-							val: id2,
-							type: sql.INT
-						}
-					},
-					multiple: true
-				} ).then( function( res ) {
-					multipleResults = res;
-					done();
-				} );
-			};
-
-			sql.execute( config, {
-				query: "insert into tds_node_test..NodeTestTable (v1, i1) values (@v1, @i1); insert into tds_node_test..NodeTestTable (v1, i1) values (@v2, @i2); ",
-				params: {
-					i1: {
-						val: id1,
-						type: sql.INT
-					},
-					v1: {
-						val: "result1",
-						type: sql.NVARCHAR
-					},
-					i2: {
-						val: id2,
-						type: sql.INT
-					},
-					v2: {
-						val: "result2",
-						type: sql.NVARCHAR
-					}
-				}
-			} ).then( function() {
-				insertCheck( done );
+		it( "should have 2 record sets from plain sql", function( done ) {
+			multipleRSPlainCheck( function() {
+				expect( multipleRSPlainResults.length ).to.be( 2 );
+				expect( multipleRSPlainResults[ 0 ].length ).to.be( 1 );
+				expect( multipleRSPlainResults[ 1 ].length ).to.be( 1 );
+				expect( multipleRSPlainResults[ 0 ][ 0 ].v1 ).to.be( "result1" );
+				expect( multipleRSPlainResults[ 1 ][ 0 ].v1 ).to.be( "result2" );
+				expect( multipleRSPlainResults.returnValue ).to.be( undefined );
+				done();
 			} );
 		} );
-
-		it( "should have inserted the rows", function() {
-			expect( insResults.length ).to.be( 2 );
-		} );
-		it( "should return 2 record sets", function( done ) {
-			multipleRSCheck( function() {
-				expect( multipleResults.length ).to.be( 2 );
-				expect( multipleResults[ 0 ].length ).to.be( 1 );
-				expect( multipleResults[ 1 ].length ).to.be( 1 );
-				expect( multipleResults[ 0 ][ 0 ].v1 ).to.be( "result1" );
-				expect( multipleResults[ 1 ][ 0 ].v1 ).to.be( "result2" );
-				expect( multipleResults.returnValue ).to.be( undefined );
+		it( "should have 2 record sets from procedure", function( done ) {
+			multipleRSProcCheck( function() {
+				expect( multipleRSProcResults.length ).to.be( 2 );
+				expect( multipleRSProcResults[ 0 ].length ).to.be( 1 );
+				expect( multipleRSProcResults[ 1 ].length ).to.be( 1 );
+				expect( multipleRSProcResults[ 0 ][ 0 ].v1 ).to.be( "result1" );
+				expect( multipleRSProcResults[ 1 ][ 0 ].totalRows ).to.be.above( 0 );
+				expect( multipleResults.returnValue ).to.be( 0 );
 				done();
 			} );
 		} );
